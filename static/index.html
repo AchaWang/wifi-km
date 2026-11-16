@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WiFi Mouse & Keyboard</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --surface-color: rgba(255, 255, 255, 0.05);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --accent-color: #38bdf8;
+            --text-color: #f8fafc;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        header {
+            padding: 1rem;
+            text-align: center;
+            font-size: 1.2rem;
+            font-weight: 600;
+            background: rgba(15, 23, 42, 0.8);
+            border-bottom: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 10;
+        }
+
+        #touchpad {
+            flex-grow: 1;
+            margin: 1rem;
+            border-radius: 24px;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 1.5rem;
+            font-weight: 500;
+            touch-action: none; /* Prevent browser scrolling/zooming */
+            position: relative;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            padding: 0 1rem 1rem 1rem;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 1.2rem;
+            border: none;
+            border-radius: 16px;
+            background: var(--surface-color);
+            color: var(--text-color);
+            font-size: 1.1rem;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: all 0.15s ease;
+            cursor: pointer;
+        }
+
+        .btn:active {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(0.97);
+        }
+        
+        .btn-accent {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent-color);
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+
+        .btn-accent:active {
+            background: rgba(56, 189, 248, 0.2);
+        }
+
+        #hidden-input {
+            position: absolute;
+            top: -1000px;
+            left: -1000px;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <header>WiFi 滑鼠與鍵盤</header>
+
+    <div id="touchpad">
+        <div style="text-align: center; pointer-events: none;">
+            觸控板區域<br><br>
+            <span style="font-size: 1rem; opacity: 0.7;">👆 單指滑動 = 移動游標</span><br>
+            <span style="font-size: 1rem; opacity: 0.7;">✌️ 雙指上下滑 = 滑鼠滾輪</span>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn" id="btn-left">左鍵 (Left)</button>
+        <button class="btn" id="btn-right">右鍵 (Right)</button>
+    </div>
+    
+    <div class="controls" style="padding-top: 0;" id="keyboard-toggle-container">
+        <button class="btn btn-accent" id="btn-keyboard">⌨️ 開啟打字輸入框</button>
+    </div>
+
+    <div class="controls" id="input-container" style="display: none; padding-top: 0; flex-direction: column; gap: 0.5rem; align-items: stretch;">
+        <input type="text" id="text-input" placeholder="在這裡輸入文字..." style="padding: 1rem; border-radius: 16px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.2); color: var(--text-color); font-size: 1.1rem; box-sizing: border-box; width: 100%;">
+        <div style="display: flex; gap: 1rem;">
+            <button class="btn" id="btn-cancel-input" style="flex: 1;">取消</button>
+            <button class="btn btn-accent" id="btn-send-input" style="flex: 2;">送出文字</button>
+        </div>
+        <div style="display: flex; gap: 1rem; margin-top: 0.5rem;">
+            <button class="btn" id="btn-backspace" style="flex: 1;">退格 (Backspace)</button>
+            <button class="btn" id="btn-enter" style="flex: 1;">Enter 鍵</button>
+        </div>
+    </div>
+
+    <script>
+        // Use the current host to establish WebSocket connection
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = () => {
+            console.log("Connected to server");
+            document.getElementById("touchpad").innerText = "已連線，請滑動這裡";
+        };
+        ws.onclose = () => {
+            console.log("Disconnected from server");
+            document.getElementById("touchpad").innerText = "已斷線";
+        };
+
+        const touchpad = document.getElementById("touchpad");
+        let lastX = 0;
+        let lastY = 0;
+        let lastScrollY = 0;
+        let isTouching = false;
+        let isScrolling = false;
+        let scrollAccumulator = 0;
+        
+        // Touchpad logic
+        touchpad.addEventListener("touchstart", (e) => {
+            if (e.touches.length === 1) {
+                lastX = e.touches[0].clientX;
+                lastY = e.touches[0].clientY;
+                isTouching = true;
+                isScrolling = false;
+            } else if (e.touches.length === 2) {
+                lastScrollY = e.touches[0].clientY;
+                isScrolling = true;
+                isTouching = false;
+                scrollAccumulator = 0;
+            }
+        });
+
+        touchpad.addEventListener("touchmove", (e) => {
+            // Prevent default behavior to avoid scrolling the page
+            e.preventDefault(); 
+            
+            if (e.touches.length === 1 && isTouching) {
+                const currentX = e.touches[0].clientX;
+                const currentY = e.touches[0].clientY;
+                
+                const dx = currentX - lastX;
+                const dy = currentY - lastY;
+                
+                // Adjust sensitivity
+                const sensitivity = 1.8;
+                
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "move", dx: dx * sensitivity, dy: dy * sensitivity }));
+                }
+                
+                lastX = currentX;
+                lastY = currentY;
+            } else if (e.touches.length === 2 && isScrolling) {
+                const currentY = e.touches[0].clientY;
+                const dy = currentY - lastScrollY;
+                
+                scrollAccumulator += dy;
+                // scrollThreshold: 多少像素觸發一次滾動 (數值越小越靈敏)
+                const scrollThreshold = 10; 
+                
+                if (Math.abs(scrollAccumulator) >= scrollThreshold) {
+                    const scrollTicks = Math.trunc(scrollAccumulator / scrollThreshold);
+                    if (ws.readyState === WebSocket.OPEN) {
+                        // 在 Windows 預設中，發送負的 scrollTicks 會有「雙指往上推 = 頁面往上捲 (Scroll Up)」的傳統效果。
+                        // 如果您偏好 Mac 般的「自然捲動」，可改為正的 scrollTicks。
+                        ws.send(JSON.stringify({ type: "scroll", dx: 0, dy: -scrollTicks }));
+                    }
+                    scrollAccumulator -= scrollTicks * scrollThreshold;
+                }
+                lastScrollY = currentY;
+            }
+        }, { passive: false }); // Important: passive: false allows preventDefault()
+
+        touchpad.addEventListener("touchend", () => {
+            isTouching = false;
+            isScrolling = false;
+        });
+
+        // Click buttons
+        const leftClick = () => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "click", button: "left" }));
+        };
+        const rightClick = () => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "click", button: "right" }));
+        };
+
+        // For mobile, touchstart/touchend provides better feedback than click
+        const btnLeft = document.getElementById("btn-left");
+        const btnRight = document.getElementById("btn-right");
+        
+        btnLeft.addEventListener("touchstart", (e) => { e.preventDefault(); leftClick(); btnLeft.style.transform = "scale(0.97)"; });
+        btnLeft.addEventListener("touchend", (e) => { e.preventDefault(); btnLeft.style.transform = "scale(1)"; });
+        
+        btnRight.addEventListener("touchstart", (e) => { e.preventDefault(); rightClick(); btnRight.style.transform = "scale(0.97)"; });
+        btnRight.addEventListener("touchend", (e) => { e.preventDefault(); btnRight.style.transform = "scale(1)"; });
+
+        // Single tap on touchpad for left click
+        let touchStartTime = 0;
+        let touchMoved = false;
+        
+        touchpad.addEventListener("touchstart", () => {
+            touchStartTime = Date.now();
+            touchMoved = false;
+        });
+        
+        touchpad.addEventListener("touchmove", () => {
+            touchMoved = true;
+        }, { passive: false });
+        
+        touchpad.addEventListener("touchend", (e) => {
+            if (!touchMoved && Date.now() - touchStartTime < 250 && e.changedTouches.length === 1) {
+                // Was a quick tap without moving -> Left click
+                leftClick();
+            }
+        });
+
+        // Keyboard logic
+        const btnKeyboard = document.getElementById("btn-keyboard");
+        const toggleContainer = document.getElementById("keyboard-toggle-container");
+        const inputContainer = document.getElementById("input-container");
+        const textInput = document.getElementById("text-input");
+        const btnCancel = document.getElementById("btn-cancel-input");
+        const btnSend = document.getElementById("btn-send-input");
+        const btnBackspace = document.getElementById("btn-backspace");
+        const btnEnter = document.getElementById("btn-enter");
+
+        btnKeyboard.addEventListener("click", () => {
+            toggleContainer.style.display = "none";
+            inputContainer.style.display = "flex";
+            textInput.focus();
+        });
+
+        const closeInput = () => {
+            toggleContainer.style.display = "flex";
+            inputContainer.style.display = "none";
+            textInput.value = "";
+        };
+
+        btnCancel.addEventListener("click", closeInput);
+
+        const sendText = () => {
+            const val = textInput.value;
+            if (val.length > 0 && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "type_text", text: val }));
+                textInput.value = "";
+            }
+        };
+
+        btnSend.addEventListener("click", sendText);
+
+        textInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                sendText();
+            }
+        });
+
+        // Direct keys
+        btnBackspace.addEventListener("click", () => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "key", key: "Backspace" }));
+        });
+        
+        btnEnter.addEventListener("click", () => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "key", key: "Enter" }));
+        });
+
+    </script>
+</body>
+</html>
